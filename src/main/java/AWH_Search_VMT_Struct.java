@@ -61,6 +61,7 @@ public class AWH_Search_VMT_Struct extends GhidraScript {
 	private DataType    INT;
 	private DataType    LONG;
 	private DataType    PTR64;
+	private DataType    STRING;
 	private DataType    CSTRING;
 
 	private Address     dataStart;
@@ -135,6 +136,9 @@ public class AWH_Search_VMT_Struct extends GhidraScript {
 				case "/TerminatedCString":
 					CSTRING = dt;
 					break;
+				case "/string":
+					STRING = dt;
+					break;
 			}
 		}
 		if (BYTE == null) {
@@ -155,6 +159,10 @@ public class AWH_Search_VMT_Struct extends GhidraScript {
 		}
 		if (PTR64 == null) {
 			dualPrintln("DataType [/pointer64        ] not found.");
+			throw new Exception();
+		}
+		if (STRING == null) {
+			dualPrintln("DataType [/string           ] not found.");
 			throw new Exception();
 		}
 		if (CSTRING == null) {
@@ -298,7 +306,12 @@ public class AWH_Search_VMT_Struct extends GhidraScript {
 		Long ptrValue = getLongValue( vmtAddr.add(0xC8 + funcNum * 8));
 		while( ptrValue != 0){
 			vmtDataStruct.add( PTR64,                8, "func" + (++funcNum), "VMT Class function pointer" );
+			clearListing( vmtAddr.add(0xC8 + funcNum * 8) );
 			ptrValue = getLongValue( vmtAddr.add(0xC8 + funcNum * 8));
+		}
+		int dataSize = vmtDataStruct.getLength();
+		for( int i=0; i<dataSize; i++){
+			clearListing( vmtAddr.add(i) );
 		}
 		Data vmtData = createData( vmtAddr, vmtDataStruct );
 		createLabel( vmtAddr, "AWH_" + vmtDataStruct.getName(), true, SourceType.USER_DEFINED );
@@ -349,16 +362,19 @@ public class AWH_Search_VMT_Struct extends GhidraScript {
 	}
 
 	private void createTypeInfoStructure(Address addr, SShortString ss) throws Exception {
-		Structure vmtTypeInfoDataStruct = StructureFactory.createStructureDataType(currentProgram, addr, 0x2, "TypeInfo_"+ss.value, true);
-		vmtTypeInfoDataStruct.replaceAtOffset( 0x00, BYTE,  -1, "classTypeEnum", "VMT typeInfo Enum int" );
-		vmtTypeInfoDataStruct.replaceAtOffset( 0x01, BYTE,  -1, "classnameLen",  "VMT typeInfo Classname length" );
+		clearListing(addr.add(0x01));
 		int classnameLen = ((int) memory.getByte( addr.add( 0x01 ) )) & 0xFF;
-		Data classnameData = createAsciiString( addr.add(0x02), classnameLen);
-		DataType classnameDataType = classnameData.getDataType();
-		clearListing( addr.add(0x02) );
-		vmtTypeInfoDataStruct.add(classnameDataType, classnameLen, "classname",      "VMT TypeInfo Classname");
-		vmtTypeInfoDataStruct.add( PTR64,                8, "typeInfoVMTPtr", "VMT TypeInfo pointer to VMT" );
-		vmtTypeInfoDataStruct.add( PTR64,                8, "typeInfoParent", "VMT TypeInfo pointer to parent TypeInfo" );
+		clearListing(addr.add(0x01));
+		Structure vmtTypeInfoDataStruct = StructureFactory.createStructureDataType(currentProgram, addr, 0x02, "TypeInfo_"+ss.value, true);
+		vmtTypeInfoDataStruct.replaceAtOffset( 0x00, BYTE,      -1, "classTypeEnum", "VMT typeInfo Enum int" );
+		vmtTypeInfoDataStruct.replaceAtOffset( 0x01, BYTE,      -1, "classnameLen",  "VMT typeInfo Classname length" );
+		vmtTypeInfoDataStruct.add( STRING, classnameLen, "classname",      "VMT TypeInfo Classname");
+		vmtTypeInfoDataStruct.add( PTR64,     -1, "typeInfoVMTPtr", "VMT TypeInfo pointer to VMT" );
+		vmtTypeInfoDataStruct.add( PTR64,     -1, "typeInfoParent", "VMT TypeInfo pointer to parent TypeInfo" );
+		int dataSize = vmtTypeInfoDataStruct.getLength();
+		for( int i=0; i<dataSize; i++){
+			clearListing( addr.add(i) );
+		}
 		Data vmtTypeInfoData = createData( addr, vmtTypeInfoDataStruct );
 		createLabel( addr, "AWH_" + vmtTypeInfoDataStruct.getName(), true, SourceType.USER_DEFINED );
 		//dualPrintln( "TypeInfo vmtPtr: " + vmtTypeInfoData.getComponent(3).getValue() );
@@ -411,24 +427,26 @@ public class AWH_Search_VMT_Struct extends GhidraScript {
 	}
 
 	private boolean isAVMT(Address vmtAddr) throws Exception {
-		long valOfInstanceSize      = memory.getLong( vmtAddr.add(0x00) );
-		long valOfInstanceSize2     = memory.getLong( vmtAddr.add(0x08) );
-		long valOfParent            = memory.getLong( vmtAddr.add(0x10) );
-		long valOfClassName         = memory.getLong( vmtAddr.add(0x18) );
-		long valOfTypeInfo          = memory.getLong( vmtAddr.add(0x38) );
-		long valOfDestroy           = memory.getLong( vmtAddr.add(0x60) );
-		long valOfNewInstance       = memory.getLong( vmtAddr.add(0x68) );
-		long valOfFreeInstance      = memory.getLong( vmtAddr.add(0x70) );
-		long valOfSafeCallException = memory.getLong( vmtAddr.add(0x78) );
-		long valOfDefaultHandler    = memory.getLong( vmtAddr.add(0x80) );
-		long valOfAfterConstruction = memory.getLong( vmtAddr.add(0x88) );
-		long valOfBeforeDestruction = memory.getLong( vmtAddr.add(0x90) );
-		long valOfDefaultHandlerStr = memory.getLong( vmtAddr.add(0x98) );
-		long valOfDispatch          = memory.getLong( vmtAddr.add(0xA0) );
-		long valOfDispatchStr       = memory.getLong( vmtAddr.add(0xA8) );
-		long valOfEquals            = memory.getLong( vmtAddr.add(0xB0) );
-		long valOfGetHashCode       = memory.getLong( vmtAddr.add(0xB8) );
-		long valOfToString          = memory.getLong( vmtAddr.add(0xC0) );
+		long[] longArray = new long[25];
+		int numRetrieved = memory.getLongs(vmtAddr, longArray);
+		long valOfInstanceSize      = longArray[ 0]; // 0x00
+		long valOfInstanceSize2     = longArray[ 1]; // 0x08
+		long valOfParent            = longArray[ 2]; // 0x10
+		long valOfClassName         = longArray[ 3]; // 0x18
+		long valOfTypeInfo          = longArray[ 7]; //0x38
+		long valOfDestroy           = longArray[12]; //0x60
+		long valOfNewInstance       = longArray[13]; //0x68
+		long valOfFreeInstance      = longArray[14]; //0x70
+		long valOfSafeCallException = longArray[15]; //0x78
+		long valOfDefaultHandler    = longArray[16]; //0x80
+		long valOfAfterConstruction = longArray[17]; //0x88
+		long valOfBeforeDestruction = longArray[18]; //0x90
+		long valOfDefaultHandlerStr = longArray[19]; //0x98
+		long valOfDispatch          = longArray[20]; //0xA0
+		long valOfDispatchStr       = longArray[21]; //0xA8
+		long valOfEquals            = longArray[22]; //0xB0
+		long valOfGetHashCode       = longArray[23]; //0xB8
+		long valOfToString          = longArray[24]; //0xC0
 
 		boolean valid = false;
 		if( valOfInstanceSize      != 0 &&
