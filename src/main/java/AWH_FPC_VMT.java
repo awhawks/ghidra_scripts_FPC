@@ -17,7 +17,7 @@
 //@category AWH
 //@keybinding shift ctrl V
 //@menupath AWH.VMT
-//@toolbar awh_vmt.png
+//@toolbar vmt.png
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
@@ -45,7 +45,7 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
 
-public class AWH_FPC_VMT_ver2 extends GhidraScript {
+public class AWH_FPC_VMT extends GhidraScript {
 	private AddressFactory  addressFactory;
 	private DataTypeManager dataTypeManager;
 	private FunctionManager functionManager;

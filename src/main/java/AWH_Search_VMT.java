@@ -16,7 +16,7 @@
 // Search for VMT table entries
 //@category AWH
 //@menupath AWH.Search_VMT
-//@toolbar awh_search.png
+//@toolbar search.png
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
@@ -32,6 +32,7 @@ import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.mem.Memory;
+import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.scalar.Scalar;
 import ghidra.program.model.symbol.Namespace;
@@ -162,7 +163,6 @@ public class AWH_Search_VMT extends GhidraScript {
 		dualPrintln("programFile:  " + getProgramFile().getAbsolutePath());
 		dualPrintln("current addr: " + currentAddress.toString("0x"));
 		dualPrintln(String.format("name: %-20s 0x%-15s 0x%-15s", dataBlock.getName(), dataStart, dataEnd));
-
 	}
 
 	@Override
@@ -201,47 +201,25 @@ public class AWH_Search_VMT extends GhidraScript {
 						endOffset++;
 						cb = ((int) memory.getByte(foundBytes.add(endOffset))) & 0xFF;
 					}
-					Address parent = foundBytes.add(endOffset);
-					long parentPtr = memory.getLong(parent);
-					if (parentPtr == 0 || (parentPtr >= dataStart.getUnsignedOffset() && parentPtr < dataEnd.getUnsignedOffset())) {
-						Address classname = parent.add(0x08);
-						long classnamePtr = memory.getLong(classname);
-						if (classnamePtr == 0 || (classnamePtr >= dataStart.getUnsignedOffset() && classnamePtr < dataEnd.getUnsignedOffset())) {
-							Address vmtAddr = parent.subtract(0x10);
-							Symbol[] symbols = symbolTable.getSymbols(vmtAddr);
-							String syms = "";
-							for (Symbol symbol : symbols) {
-								syms += " [" + symbol.getName(true) + "]";
-							}
-							dualPrintln(String.format("[%s - %s][%s]found: %s parent: %s VMT: %s  %s",
-									dataStart.toString("0x"),
-									dataEnd.toString("0x"),
-									start.toString("0x"),
-									foundBytes.toString("0x"),
-									parent.toString("0x"),
-									vmtAddr.toString("0x"),
-									syms
-							));
-							new SVMT(vmtAddr);
-						} else {
-							dualPrintln(String.format("[%s - %s][%s]found: %s parent: %s doesn't look like VMT classname bad",
-									dataStart.toString("0x"),
-									dataEnd.toString("0x"),
-									start.toString("0x"),
-									foundBytes.toString("0x"),
-									parent.toString("0x")
-							));
+					Address vmtAddr = foundBytes.add(endOffset).subtract(0x10);
+					boolean isValidVMT = isAVMT(vmtAddr);
+					if( isValidVMT ){
+						Symbol[] symbols = symbolTable.getSymbols(vmtAddr);
+						String syms = "";
+						for (Symbol symbol : symbols) {
+							syms += " [" + symbol.getName(true) + "]";
 						}
-					} else {
-						dualPrintln(String.format("[%s - %s][%s]found: %s parent: %s doesn't look like VMT parent bad",
+						dualPrintln(String.format("[%s - %s][%s]found: %s VMT: %s  %s",
 								dataStart.toString("0x"),
 								dataEnd.toString("0x"),
 								start.toString("0x"),
 								foundBytes.toString("0x"),
-								parent.toString("0x")
+								vmtAddr.toString("0x"),
+								syms
 						));
+						new SVMT(vmtAddr);
 					}
-					start = parent;
+					start = vmtAddr.add(0xC8);
 				} else {
 					dualPrintln(String.format("[%s - %s][%s] Did not find in range",
 							dataStart.toString("0x"),
@@ -260,6 +238,89 @@ public class AWH_Search_VMT extends GhidraScript {
 		}
 	}
 
+	private boolean isInDataSegment(long value){
+		boolean valid = false;
+		if( value >= dataStart.getUnsignedOffset() && value <= dataEnd.getUnsignedOffset() ){
+			valid = true;
+		}
+		return valid;
+	}
+
+	private boolean isInTextSegment(long value){
+		boolean valid = false;
+		if( value >= textStart.getUnsignedOffset() && value <= textEnd.getUnsignedOffset() ){
+			valid = true;
+		}
+		return valid;
+	}
+
+	private boolean isAVMT(Address vmtAddr) throws Exception {
+		long valOfInstanceSize      = memory.getLong( vmtAddr.add(0x00) );
+		long valOfInstanceSize2     = memory.getLong( vmtAddr.add(0x08) );
+		long valOfParent            = memory.getLong( vmtAddr.add(0x10) );
+		long valOfClassName         = memory.getLong( vmtAddr.add(0x18) );
+		long valOfTypeInfo          = memory.getLong( vmtAddr.add(0x38) );
+		long valOfDestroy           = memory.getLong( vmtAddr.add(0x60) );
+		long valOfNewInstance       = memory.getLong( vmtAddr.add(0x68) );
+		long valOfFreeInstance      = memory.getLong( vmtAddr.add(0x70) );
+		long valOfSafeCallException = memory.getLong( vmtAddr.add(0x78) );
+		long valOfDefaultHandler    = memory.getLong( vmtAddr.add(0x80) );
+		long valOfAfterConstruction = memory.getLong( vmtAddr.add(0x88) );
+		long valOfBeforeDestruction = memory.getLong( vmtAddr.add(0x90) );
+		long valOfDefaultHandlerStr = memory.getLong( vmtAddr.add(0x98) );
+		long valOfDispatch          = memory.getLong( vmtAddr.add(0xA0) );
+		long valOfDispatchStr       = memory.getLong( vmtAddr.add(0xA8) );
+		long valOfEquals            = memory.getLong( vmtAddr.add(0xB0) );
+		long valOfGetHashCode       = memory.getLong( vmtAddr.add(0xB8) );
+		long valOfToString          = memory.getLong( vmtAddr.add(0xC0) );
+
+		boolean valid = false;
+		if( valOfInstanceSize      != 0 &&
+				valOfInstanceSize2     != 0 &&
+				valOfClassName         != 0 &&
+				valOfTypeInfo          != 0 &&
+				valOfDestroy           != 0 &&
+				valOfNewInstance       != 0 &&
+				valOfFreeInstance      != 0 &&
+				valOfSafeCallException != 0 &&
+				valOfDefaultHandler    != 0 &&
+				valOfAfterConstruction != 0 &&
+				valOfBeforeDestruction != 0 &&
+				valOfDefaultHandlerStr != 0 &&
+				valOfDispatch          != 0 &&
+				valOfDispatchStr       != 0 &&
+				valOfEquals            != 0 &&
+				valOfGetHashCode       != 0 &&
+				valOfToString          != 0
+		) {
+			if( (valOfParent == 0 || isInDataSegment( valOfParent ) ) &&
+					isInDataSegment( valOfClassName ) &&
+					isInDataSegment( valOfTypeInfo ) ){
+				if( isInTextSegment( valOfDestroy           ) &&
+						isInTextSegment( valOfNewInstance       ) &&
+						isInTextSegment( valOfFreeInstance      ) &&
+						isInTextSegment( valOfSafeCallException ) &&
+						isInTextSegment( valOfDefaultHandler    ) &&
+						isInTextSegment( valOfAfterConstruction ) &&
+						isInTextSegment( valOfBeforeDestruction ) &&
+						isInTextSegment( valOfDefaultHandlerStr ) &&
+						isInTextSegment( valOfDispatch          ) &&
+						isInTextSegment( valOfDispatchStr       ) &&
+						isInTextSegment( valOfEquals            ) &&
+						isInTextSegment( valOfGetHashCode       ) &&
+						isInTextSegment( valOfToString          ) ) {
+					valid = true;
+				} else {
+					dualPrintln(String.format("#### %s has non-text locations in one of VMT functions", vmtAddr.toString("0x")));
+				}
+			} else {
+				dualPrintln(String.format("#### %s has non-data locations in one of parent/classname/typeInfo VMT parts", vmtAddr.toString("0x")));
+			}
+		} else {
+			dualPrintln(String.format("#### %s has null pointers in needed VMT parts", vmtAddr.toString("0x")));
+		}
+		return valid;
+	}
 
 	class SVMT {
 		SVMTField vInstanceSize;
@@ -349,6 +410,7 @@ public class AWH_Search_VMT extends GhidraScript {
 			} else {
 				dualPrintln("Already parsed " + vClassName.className );
 			}
+			analyzeChanges(currentProgram);
 			dualPrintln("-------------------end   SVMT ["+addr.toString("0x")+"] (" + className + ")-------------------");
 		}
 	}
@@ -368,7 +430,7 @@ public class AWH_Search_VMT extends GhidraScript {
 		SVMT        parent;
 
 		SVMTField( Address arg_vmtStartAddr, String arg_classname, int arg_offset, DataType arg_dataType, String arg_comment, String arg_ptrPrefixSuffix ) throws Exception {
-			dualPrintln("-------------------start SVMTField ["+arg_vmtStartAddr.toString("0x")+"](" + className + ")[" + arg_offset + "][" + arg_ptrPrefixSuffix + "][" + arg_comment + "]-------------------");
+			//dualPrintln("-------------------start SVMTField ["+arg_vmtStartAddr.toString("0x")+"](" + className + ")[" + arg_offset + "][" + arg_ptrPrefixSuffix + "][" + arg_comment + "]-------------------");
 			vmtStartAddr    = arg_vmtStartAddr;
 			if( arg_classname != null ) {
 				className = arg_classname;
@@ -377,7 +439,7 @@ public class AWH_Search_VMT extends GhidraScript {
 			dataType        = arg_dataType;
 			comment         = arg_comment;
 			ptrPrefixSuffix = arg_ptrPrefixSuffix;
-			dualPrintln(String.format("VMT Field:      %03d %-20s %-25s %-40s", offset, dataType.getPathName(), ptrPrefixSuffix, comment));
+			//dualPrintln(String.format("VMT Field:      %03d %-20s %-25s %-40s", offset, dataType.getPathName(), ptrPrefixSuffix, comment));
 			fieldAddr = vmtStartAddr.add(offset);
 			int dtLen = dataType.getLength();
 			for( int i=0; i<dtLen; i++) {
@@ -451,15 +513,21 @@ public class AWH_Search_VMT extends GhidraScript {
 					case 0x50:
 					case 0x58:
 						if( ptrAddr.getUnsignedOffset() != 0 ) {
+							boolean makePrimary = true;
+							for( Symbol symbol : symbolTable.getSymbols(ptrAddr) ) {
+								if( symbol.getName().startsWith( ptrPrefixSuffix)) {
+									makePrimary = false;
+								}
+							}
 							String dataFieldLabel = ptrPrefixSuffix + className;
-							Symbol dataFieldSymbol = createLabel(ptrAddr, dataFieldLabel, true);
+							Symbol dataFieldSymbol = createLabel(ptrAddr, dataFieldLabel, makePrimary);
 							dualPrintln( String.format("%s VMT field init: %-20s       0x%-15s\n", className, dataFieldSymbol.getName(), ptrAddr));
 						}
 						break;
 					default: // class functions
 						if( ptrAddr.getUnsignedOffset() != 0 ) {
 							fieldAddr = vmtStartAddr.add(offset);
-							dualPrintln( String.format("%s VMT field init:                            0x%-15s\n", className, ptrAddr));
+							//dualPrintln( String.format("%s VMT field init:                            0x%-15s\n", className, ptrAddr));
 							if( ptrAddr.getUnsignedOffset() >= textStart.getUnsignedOffset() && ptrAddr.getUnsignedOffset() < textEnd.getUnsignedOffset() ) {
 								createFunc();
 							} else {
@@ -469,7 +537,7 @@ public class AWH_Search_VMT extends GhidraScript {
 						break;
 				}
 			}
-			dualPrintln("-------------------end   SVMTField ["+arg_vmtStartAddr.toString("0x")+"](" + className + ")[" + arg_offset + "][" + arg_ptrPrefixSuffix + "][" + arg_comment + "]-------------------");
+			//dualPrintln("-------------------end   SVMTField ["+arg_vmtStartAddr.toString("0x")+"](" + className + ")[" + arg_offset + "][" + arg_ptrPrefixSuffix + "][" + arg_comment + "]-------------------");
 		}
 
 		public void createFunc() throws Exception {
@@ -485,7 +553,6 @@ public class AWH_Search_VMT extends GhidraScript {
 						dualPrintln(funcName + " Disassembling at:     " + ptrAddr.toString("0x"));
 						clearListing(ptrAddr);
 						disassemble(ptrAddr);
-						analyzeChanges(currentProgram);
 					}
 					existingFunc = getFunctionAt(ptrAddr);
 					if( existingFunc == null ) {
@@ -505,7 +572,6 @@ public class AWH_Search_VMT extends GhidraScript {
 							newFunc.setParentNamespace(ns);
 							dualPrintln(funcName + " Func:                 " + ptrAddr.toString("0x") + " with name: " + newFunc.getName());
 						}
-						analyzeChanges(currentProgram);
 					}
 				} else {
 					// fuction exist so check name
@@ -518,7 +584,6 @@ public class AWH_Search_VMT extends GhidraScript {
 							dualPrint(funcName + " Func renaming:        " + ptrAddr.toString("0x") + " with name: " + existingFunc.getName(true));
 							existingFunc.setName(funcName, SourceType.USER_DEFINED);
 							dualPrintln( " => " + existingFunc.getName(true));
-							analyzeChanges(currentProgram);
 						}
 					}
 				}
@@ -532,7 +597,7 @@ public class AWH_Search_VMT extends GhidraScript {
 		String value;
 
 		SShortString(Address addr) throws Exception {
-			dualPrintln("-------------------SShortString ["+addr.toString("0x")+"]-------------------");
+			//dualPrintln("-------------------SShortString ["+addr.toString("0x")+"]-------------------");
 			Address offsetAddr  = addr.add(0x00);
 			Address offsetAddr1 = addr.add(0x01);
 			clearListing( offsetAddr );
@@ -544,7 +609,7 @@ public class AWH_Search_VMT extends GhidraScript {
 			Data nameData = createAsciiString( addr.add(0x01), len );
 			value = (String) nameData.getValue();
 			Symbol strSymbol = createLabel(addr, value, true);
-			dualPrintln("-------------------SShortString ["+addr.toString("0x")+"] ("+ value +")-------------------");
+			//dualPrintln("-------------------SShortString ["+addr.toString("0x")+"] ("+ value +")-------------------");
 		}
 	}
 

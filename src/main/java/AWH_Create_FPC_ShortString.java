@@ -16,7 +16,7 @@
 // Labels a VMT table based on its string name
 //@category AWH
 //@menupath AWH.Short_String
-//@toolbar awh_str.png
+//@toolbar str.png
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
